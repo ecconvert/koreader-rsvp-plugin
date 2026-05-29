@@ -17,6 +17,7 @@ A powerful RSVP (Rapid Serial Visual Presentation) plugin that enables speed rea
 
 ### RSVP Reading Widget
 ![RSVP Widget](rsvp.gif)
+Reading on 400 words per second 
 
 ### Settings Menu
 ![Settings Menu](settings.png)
