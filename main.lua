@@ -32,6 +32,7 @@ local DataStorage = require("datastorage")
 local util = require("util")
 local _ = require("gettext")
 local T = require("ffi/util").template
+local Comprehension = require("comprehension")
 
 local FastReader = WidgetContainer:extend{
     name = "fastreader",
@@ -77,7 +78,11 @@ function FastReader:init()
     
     -- Multi-word display settings
     self.words_preview_count = self.settings:readSetting("words_preview_count") or 3 -- Show current + 2 next words
-    
+
+    -- Comprehension test
+    self.comprehension = Comprehension:new(self.settings)
+    self.session_words = {}  -- rolling buffer of all words flashed this session
+
     -- Register for document events to setup callbacks when document is ready
     self.ui:registerPostReaderReadyCallback(function()
         self:setupTapHandler()
@@ -579,7 +584,8 @@ function FastReader:startRSVP()
     end
     
     self.rsvp_enabled = true
-    
+    self.session_words = {}  -- reset buffer for new session
+
     -- Check if we can resume from last position on this page
     if self:shouldResumeFromLastPosition() then
         self.current_word_index = self.last_word_index
@@ -613,6 +619,29 @@ function FastReader:startRSVP()
     self:showRSVPWord(self.words[self.current_word_index])
     
     logger.info("FastReader: RSVP started successfully")
+end
+
+function FastReader:getBookMeta()
+    local meta = { title = "", author = "", subject = "" }
+    if not self.ui.document then return meta end
+    local props = self.ui.document:getProps()
+    if props then
+        meta.title = props.title or props.name or ""
+        meta.author = props.author or props.authors or ""
+        meta.subject = props.subject or props.keywords or ""
+    end
+    return meta
+end
+
+function FastReader:getDocHash()
+    if self.ui.document and self.ui.document.file then
+        local md5 = require("ffi/sha2")
+        if md5 then
+            return md5.md5(self.ui.document.file)
+        end
+        return self.ui.document.file:gsub("[^%w]", "_")
+    end
+    return "unknown"
 end
 
 function FastReader:stopRSVP()
@@ -660,6 +689,14 @@ function FastReader:stopRSVP()
         text = _("RSVP stopped"),
         timeout = 1.5,
     })
+
+    -- Offer comprehension test after a short delay so the stop message clears first
+    local words_snapshot = self.session_words
+    local book_meta = self:getBookMeta()
+    local doc_hash = self:getDocHash()
+    UIManager:scheduleIn(1.8, function()
+        self.comprehension:offerTest(words_snapshot, book_meta, doc_hash)
+    end)
 end
 
 function FastReader:rsvpTick()
@@ -671,7 +708,9 @@ function FastReader:rsvpTick()
     
     if self.current_word_index <= #self.words then
         -- Show next word
-        self:showRSVPWord(self.words[self.current_word_index])
+        local current_word = self.words[self.current_word_index]
+        table.insert(self.session_words, current_word)
+        self:showRSVPWord(current_word)
         
         -- Schedule next tick
         local interval = 60000 / self.rsvp_speed
@@ -1022,6 +1061,10 @@ function FastReader:addToMainMenu(menu_items)
             },
         },
     }
+    -- Inject comprehension settings
+    for _, item in ipairs(self.comprehension:getMenuItems()) do
+        table.insert(menu_items.fastreader.sub_item_table, item)
+    end
 end
 
 function FastReader:onFastReaderRSVP()
